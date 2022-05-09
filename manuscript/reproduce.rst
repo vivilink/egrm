@@ -11,7 +11,7 @@ The output is a folder named as [name], including two files:
 
 Usage example:
 
-    simulate --nrow simulate --name simulation01 --demo ooa --nrow 2 --ns 1000 0 --ns_ref 0 1000 --time_move 8000 
+    simulate --nrow 2 --name simulation01 --demo ooa --nrow 2 --ns 1000 0 --ns_ref 0 1000 --time_move 8000 
 
 This will simulate a grid of 2 rows and 1 column of demes, 
 the population size history of each deme follows the pre-defined out-of-Africa demography.
