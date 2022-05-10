@@ -165,7 +165,7 @@ parser = argparse.ArgumentParser(
 parser.add_argument("--name", default="tmp", type=str, help="output file name")
 
 # workflow control
-parser.add_argument("--run_all", "--all", action="store_true", help="run all steps")
+parser.add_argument("--run_all", "--all", action="store_false", help="run all steps")
 parser.add_argument(
     "--run_egrm",
     "--egrm",
@@ -199,47 +199,29 @@ parser.add_argument(
 
 # demography and population structure
 parser.add_argument("--demo", type=str, default="ooa", help="demography model")
-parser.add_argument(
-    "--admixture", action="store_true", help="simulate admixture, otherwise split"
-)
+parser.add_argument("--admixture", action="store_true", help="simulate admixture, otherwise split")
 parser.add_argument("--nrow", type=int, default=1, help="number of rows of populations")
-parser.add_argument(
-    "--ncol", type=int, default=1, help="number of columns of populations"
-)
+parser.add_argument("--ncol", type=int, default=1, help="number of columns of populations")
 parser.add_argument("--migration_rate", type=float, default=0.01, help="migration rate")
 parser.add_argument("--time_move", type=float, default=100, help="move time")
-parser.add_argument(
-    "--pop_size",
-    type=int,
-    default=1000,
-    help="population size (only applies when using constant demo)",
-)
+parser.add_argument("--pop_size", type=int, default=1000,
+                    help="population size (only applies when using constant demo)")
 
 # sample sizes
 parser.add_argument("--N", type=int, help="total sample size")
 parser.add_argument("--n", type=int, help="sample size in each population")
-parser.add_argument(
-    "--ns", type=int, nargs="*", help="list of sample sizes in each population"
-)
-parser.add_argument(
-    "--ns_ref", type=int, nargs="*", help="list of reference panel sample sizes in each population"
-)
+parser.add_argument("--ns", type=int, nargs="*", help="list of sample sizes in each population")
+parser.add_argument("--ns_ref", type=int, nargs="*", help="list of reference panel sample sizes in each population")
 
 # genetics
 parser.add_argument("--l", type=int, default=3e7, help="chromosome length")
 parser.add_argument("--mutation_rate", default=1e-8, type=float, help="mutation rate")
-parser.add_argument(
-    "--recomb_rate", default=1e-8, type=float, help="recombination rate"
-)
+parser.add_argument("--recomb_rate", default=1e-8, type=float, help="recombination rate")
 parser.add_argument("--cas_ratio", default=0.1, type=float, help="M_cas / M")
 parser.add_argument("--obs_ratio", default=0.2, type=float, help="M_obs / M_5")
 parser.add_argument("--h2g", default=1.0, type=float, help="heritability")
-parser.add_argument(
-    "--Alpha", default=-1, type=float, help="causal probability parameter"
-)
-parser.add_argument(
-    "--Beta", default=1, type=float, help="observation probability parameter"
-)
+parser.add_argument("--Alpha", default=-1, type=float, help="causal probability parameter")
+parser.add_argument("--Beta", default=1, type=float, help="observation probability parameter")
 
 args = vars(parser.parse_args())
 locals().update(args)
@@ -248,14 +230,19 @@ name = args.pop("name")
 os.system("rm -r -f " + name + " && mkdir " + name)
 os.chdir(name)
 
-if run_all:
-    run_egrm = True
-    run_relate = True
-    run_tsinfer = True
-    run_mtmrca = True
-    run_impute = True
-    run_prune = True
+run_all = False
+print("set run_all to False")
+run_egrm = False
+run_relate = False
+run_tsinfer = False
+run_mtmrca = False
+run_impute = False
+run_prune = False
 
+
+print("admixture set to", admixture)
+print("ns is set to", ns)
+print("ns_ref is set to", ns_ref)
 
 ### processing samples sizes ###
 if (N is not None) + (n is not None) + (ns is not None) != 1:
@@ -354,6 +341,7 @@ else:
         for i in range(nrow * ncol)
     ]
     demo_events.append(msprime.MigrationRateChange(time=time_move, rate=0))
+    print("appending mass migration at time_move ", time_move)
 
 if demo == "ooa":
     demo_events += [
@@ -367,14 +355,14 @@ if demo == "ooa":
 
 trees = msprime.simulate(
     population_configurations=population_configurations,
-    migration_matrix=migration_matrix,
+    migration_matrix=list(migration_matrix),
     length=l,
     recombination_rate=recomb_rate,
     mutation_rate=mutation_rate,
     demographic_events=demo_events,
 )
 
-
+print("trees.num_samples", trees.num_samples)
 ### compute Fst and then split study and reference
 print("computing FST", flush = True)
 
@@ -402,6 +390,8 @@ else:
 
 trees_ref = remove_monomorphic(trees.simplify(reference_ids))
 trees = remove_monomorphic(trees.simplify(study_ids))
+
+trees_ref.dump("simulation_ref.trees")
 
 variants = trees.variants()
 MAFs = np.array([v.genotypes.mean() for v in trees.variants()])
@@ -436,420 +426,420 @@ obss = np.random.choice(
 )
 obss.sort()
 
-# phenotype
-M_cas = int(round(M * cas_ratio))
-weights = np.multiply(np.power(MAFs, Alpha), np.power(1 - MAFs, Alpha))
-weights /= weights.sum()
-cass = np.random.choice(range(M), M_cas, replace=False, p=weights)
-cass.sort()
-X_cas = getX(trees, cass).astype("float")
-
-betas = np.random.normal(scale=np.sqrt(h2g / M_cas), size=(M_cas, 1))
-
-G = np.dot(X_cas, betas)
-G.shape = (N,)
-s2g = np.var(G, ddof=1)
-s2e = s2g * (1 / h2g - 1)
-
-e = np.random.normal(scale=np.sqrt(s2e), size=N)
-y = G + e
-
-
-### compute Ks ###
-print("computing Ks", flush = True)
-
-K_all = getK(trees, np.arange(M))
-K_common = getK(trees, commons)
-K_rare = getK(trees, rares)
-K_obs = getK(trees, obss)
-K_cas = getK(trees, cass)
-
-if run_egrm:
-    print("computing EK", flush = True)
-    EK, _, EK_mu = varGRM_C(trees, var=False)
-
-if run_mtmrca:
-    print("computing mTMRCA", flush = True)
-    mtmrca, _ = mTMRCA_C(trees)
-
-### running LD pruning ###
-if run_prune:
-    print("computing K_pruned", flush = True)
-    os.mkdir("prune")
-    os.chdir("prune")
-    
-    from pyplink import PyPlink
-    from bed_reader import open_bed
-    
-    samples = range(int(N / 2))
-    X_obs = getX(trees, obss)
-    maternals = np.array(range(0, N, 2))
-    paternals = np.array(range(1, N, 2))
-    X_obs_dip = X_obs[maternals] + X_obs[paternals]
-    loci = np.array([v.position for v in trees.variants()])
-    
-    with PyPlink(name, "w") as bedfile:
-        for v in np.transpose(X_obs_dip):
-            bedfile.write_genotypes(v)
-    
-    fam_file = open(name + ".fam", "a")
-    for idx, sample in enumerate(samples):
-        string = (
-            "FID{}".format(sample + 1) + " IID{}".format(sample + 1) + " 0 0 0 0" + "\n"
-        )
-        bytes = fam_file.write(string)
-    fam_file.close()
-    
-    bim_file = open(name + ".bim", "a")
-    for idx, obs in enumerate(obss):
-        string = "1 snp" + str(obs + 1) + " 0 " + str(int(loci[obs])) + " A T\n"
-        bytes = bim_file.write(string)
-    bim_file.close()
-    
-    os.system(
-        "~/bin/plink2 "
-        + "--bfile "
-        + name
-        + " "
-        + "--indep-pairwise 50 5 0.1 "
-        + "--out LD"
-    )
-    
-    os.system(
-        "~/bin/plink2 "
-        + "--bfile "
-        + name
-        + " --make-bed "
-        + "--extract LD.prune.in "
-        + "--out pruned"
-    )
-    
-    X_pruned = open_bed("pruned.bed").read()
-    Z_pruned = X_pruned
-    Z_pruned -= Z_pruned.mean(axis=0)
-    Z_pruned /= Z_pruned.std(axis=0)
-    K_pruned = np.dot(Z_pruned, np.transpose(Z_pruned))
-    
-    os.chdir("..")
-
-### running impute ###
-def X2gen(X):
-    n, m = X.shape
-    maternals = np.array(range(0, n, 2))
-    paternals = np.array(range(1, n, 2))
-    X_dip = X[maternals, :] + X[paternals, :]
-    
-    tmp1 = (X_dip == 2).astype(int)
-    tmp2 = (X_dip == 1).astype(int)
-    tmp3 = (X_dip == 0).astype(int)
-    
-    n_gen = int(n * 3 / 2)
-    buffer = np.zeros([n_gen, m]).astype(int)
-    buffer[np.arange(0, n_gen, 3), :] = tmp1
-    buffer[np.arange(1, n_gen, 3), :] = tmp2
-    buffer[np.arange(2, n_gen, 3), :] = tmp3
-    return buffer
+# # phenotype
+# M_cas = int(round(M * cas_ratio))
+# weights = np.multiply(np.power(MAFs, Alpha), np.power(1 - MAFs, Alpha))
+# weights /= weights.sum()
+# cass = np.random.choice(range(M), M_cas, replace=False, p=weights)
+# cass.sort()
+# X_cas = getX(trees, cass).astype("float")
+#
+# betas = np.random.normal(scale=np.sqrt(h2g / M_cas), size=(M_cas, 1))
+#
+# G = np.dot(X_cas, betas)
+# G.shape = (N,)
+# s2g = np.var(G, ddof=1)
+# s2e = s2g * (1 / h2g - 1)
+#
+# e = np.random.normal(scale=np.sqrt(s2e), size=N)
+# y = G + e
 
 
-def gen2X(gen):
-    n, m = gen.shape
-    tmp1 = gen[np.arange(0, n, 3), :]
-    tmp2 = gen[np.arange(1, n, 3), :]
-    buffer = tmp1 * 2 + tmp2
-    return buffer
-
-
-if run_impute:
-    print("computing K_imputed", flush = True)
-    os.mkdir("impute")
-    os.chdir("impute")
-    
-    X_obs = getX(trees, obss)
-    gen_obs = X2gen(X_obs)
-    loci_obs = np.ceil(loci[obss]).astype(int)
-    
-    haps_file = open(name + ".gen", "a")
-    i = 0
-    for idx, obs in enumerate(obss):
-        string = "chr snp" + str(obs + 1) + " " + str(loci_obs[idx]) + " A" + " T "
-        string = string + " ".join(map(str, gen_obs[:, idx])) + "\n"
-        bytes = haps_file.write(string)
-        i += 1
-    haps_file.close()
-    
-    X_ref = getX(trees_ref, np.arange(trees_ref.num_mutations))
-    gen_ref = X2gen(X_ref)
-    loci_ref = np.array([v.position for v in trees_ref.variants()])
-    loci_ref = np.ceil(loci_ref).astype(int)
-    
-    haps_file = open(name + "_ref.gen", "a")
-    i = 0
-    for idx, obs in enumerate(np.arange(trees_ref.num_mutations)):
-        string = "1 refsnp" + str(obs + 1) + " " + str(loci_ref[idx]) + " A" + " T "
-        string = string + " ".join(map(str, gen_ref[:, idx])) + "\n"
-        bytes = haps_file.write(string)
-        i += 1
-    haps_file.close()
-    
-    map_file = open(name + ".map", "a")
-    map_file.write("pos COMBINED_rate Genetic_Map\n")
-    for idx, obs in enumerate(obss):
-        string = str(loci_obs[idx]) + " " + str(1) + " "
-        string = string + str(loci_obs[idx] / 1000000) + "\n"
-        bytes = map_file.write(string)
-    map_file.close()
-    
-    os.system(
-        "~/bin/impute2 "
-        + "-g_ref "
-        + name
-        + "_ref.gen "
-        + "-m "
-        + name
-        + ".map "
-        + "-g "
-        + name
-        + ".gen "
-        + "-int 0 "
-        + str(l)
-        + " -allow_large_regions "
-        + "-o out.gen"
-    )
-    
-    gen_imputed = pd.read_table("out.gen", sep=" ", header=None).iloc[:, 5:]
-    gen_imputed = np.transpose(gen_imputed.values)
-    X_imputed = gen2X(gen_imputed)
-    
-    keep = np.logical_and(X_imputed.mean(axis=0) > 0, X_imputed.mean(axis=0) < 1)
-    X_imputed = X_imputed[:, keep]
-    
-    Z_imputed = X_imputed
-    Z_imputed -= Z_imputed.mean(axis=0)
-    Z_imputed /= Z_imputed.std(axis=0)
-    K_imputed = np.dot(Z_imputed, np.transpose(Z_imputed))
-    
-    os.chdir("..")
-
-
-### running relate ###
-if run_relate:
-    print("computing EK_relate", flush = True)
-    os.mkdir("relate")
-    os.chdir("relate")
-    
-    X_obs = getX(trees, obss)
-    loci_obs = np.ceil(loci[obss]).astype(int)
-    
-    haps_file = open(name + ".haps", "a")
-    i = 0
-    for idx, obs in enumerate(obss):
-        string = "1 snp" + str(obs + 1) + " " + str(loci_obs[idx]) + " A" + " T "
-        string = string + " ".join(map(str, X_obs[:, idx])) + "\n"
-        bytes = haps_file.write(string)
-        i += 1
-    haps_file.close()
-    os.system(
-        "gzip -f " + name + ".haps > " + name + ".haps.gz && rm -f " + name + ".haps"
-    )
-    
-    sample_file = open(name + ".sample", "a")
-    sample_file.write("ID_1 ID_2 missing\n0 0 0\n")
-    for idx in range(int(N)):
-        string = "UNR" + str(idx + 1) + " NA" + " 0\n"
-        bytes = sample_file.write(string)
-    sample_file.close()
-    
-    map_file = open(name + ".relate.map", "a")
-    map_file.write("pos COMBINED_rate Genetic_Map\n")
-    for idx, obs in enumerate(obss):
-        string = str(loci_obs[idx]) + " " + str(1) + " "
-        string = string + str(loci_obs[idx] / 1000000) + "\n"
-        bytes = map_file.write(string)
-    map_file.close()
-    
-    # os.system("~/bin/relate.sh " + name + ".haps.gz " + name + ".sample " + name + ".relate.map " + name)
-    os.system("rm -r -f " + name)
-    os.system(
-        "~/bin/Relate --mode All -m 1.25e-8 -N 30000 --memory 20 --haps "
-        + name
-        + ".haps.gz --sample "
-        + name
-        + ".sample --map "
-        + name
-        + ".relate.map -o "
-        + name
-    )
-    os.system(
-        "~/bin/RelateFileFormats --mode ConvertToTreeSequence "
-        + "-i "
-        + name
-        + " -o "
-        + name
-    )
-    
-    trees_relate = tskit.load(name + ".trees")
-    EK_relate, _, EK_relate_mu = varGRM_C(trees_relate)
-    EK_relate_partial, _, EK_relate_partial_mu = varGRM_C(trees_relate, rlim = 0, alim = 100)
-    
-    os.chdir("..")
-
-
-### running tsinfer
-if run_tsinfer:
-    print("computing EK_tsinfer", flush = True)
-    os.mkdir("tsinfer")
-    os.chdir("tsinfer")
-    
-    X_obs = getX(trees, obss)
-    loci_obs = np.ceil(loci[obss]).astype(int)
-    with tsinfer.SampleData(path=name + ".samples", sequence_length=l) as sample_data:
-        for idx, obs in enumerate(obss):
-            sample_data.add_site(loci_obs[idx], X_obs[:, idx])
-    
-    os.system("~/bin/tsinfer infer " + name + ".samples -p -t 4")
-    
-    trees_tsinfer = tskit.load(name + ".trees")
-    trees_tsinfer_simplified = trees_tsinfer.simplify(filter_populations = False, filter_individuals = False, filter_sites = False, keep_unary = False)
-    trees_tsdate = tsdate.date(trees_tsinfer_simplified, Ne=10000, mutation_rate = 1e-8)
-    
-    EK_tsinfer, _, EK_tsinfer_mu = varGRM_C(trees_tsinfer_simplified)
-    EK_tsdate, _, EK_tsdate_mu = varGRM_C(trees_tsdate)
-    
-    os.chdir("..")
-
-
-### running chromopainter
-if run_chromopainter:
-    print("computing K_chromopainter", flush = True)
-    os.mkdir("chromopainter")
-    os.chdir("chromopainter")
-    
-    idfile = pd.DataFrame({"ind":["Ind" + str(i+1) for i in np.arange(int(N/2))]})
-    idfile.to_csv(name + ".ids", sep = ",", header = False, index = False)
-    
-    loci = np.array([v.position for v in trees.variants()])
-    loci_obs = np.ceil(loci[obss]).astype(int)
-    recombfile = pd.DataFrame({"start.pos":loci_obs, "recom.rate.perbp":0.0000001})
-    recombfile.to_csv(name + ".rec", sep = " ", header = True, index = False, float_format = '%.7f')
-    
-    phasefile = open(name + ".phase", "w")
-    phasefile.write(str(N) + "\n")
-    phasefile.write(str(M_obs) + "\n")
-    phasefile.write("P " + " ".join(loci_obs.astype(str)) + "\n")
-    X_obs = getX(trees, obss)
-    for x in X_obs:
-        bytes = phasefile.write("".join(x.astype(str)) + "\n")
-    phasefile.close()
-    
-    os.system(
-        "fs " + name + ".cp " +
-        "-idfile " + name + ".ids " +
-        "-phasefiles " + name + ".phase " +
-        "-recombfiles " + name + ".rec " +
-        "-go"
-    )
-    
-    chunkcounts = pd.read_csv(name + "_linked.chunkcounts.out", sep = " ", skiprows = 1, index_col = 0).values
-    np.fill_diagonal(chunkcounts, chunkcounts.sum(axis = 1) / (chunkcounts.shape[0] - 1))
-    chunkcounts -= chunkcounts.mean(axis = 1)
-    K_chromopainter = np.dot(chunkcounts, np.transpose(chunkcounts))
-    
-    os.chdir("..")
-
-
-### collect Ks and compute correlation ###
-Ks = {
-    "K_all": K_all,
-    "K_common": K_common,
-    "K_rare": K_rare,
-    "K_obs": K_obs,
-    "K_cas": K_cas,
-}
-if run_egrm:
-    Ks["EK"] = EK
-if run_relate:
-    Ks["EK_relate"] = EK_relate
-    Ks["EK_relate_partial"] = EK_relate_partial
-if run_tsinfer:
-    Ks["EK_tsinfer"] = EK_tsinfer
-    Ks["EK_tsdate"] = EK_tsdate
-if run_mtmrca:
-    Ks["mtmrca"] = mtmrca
-
-# haploid
-diags = np.diag_indices(int(N))
-non_diags = np.where(~np.eye(int(N), dtype=bool))
-table = {}
-for key in Ks.keys():
-    table[key] = Ks[key][non_diags].flatten()
-
-table = pd.DataFrame(data=table)
-corr = table.corr(method="pearson")
-corr_spearman = table.corr(method="spearman")
-
-# diploid
-maternals = np.array(range(0, N, 2))
-paternals = np.array(range(1, N, 2))
-Ks_dip = {}
-for key in Ks.keys():
-    Ks_dip[key] = 0.5 * (
-        Ks[key][maternals, :][:, maternals]
-        + Ks[key][maternals, :][:, paternals]
-        + Ks[key][paternals, :][:, maternals]
-        + Ks[key][paternals, :][:, paternals]
-    )
-
-if run_impute:
-    Ks_dip["K_imputed"] = K_imputed
-if run_prune:
-    Ks_dip["K_pruned"] = K_pruned
-if run_chromopainter:
-    Ks_dip["K_chromopainter"] = K_chromopainter
-
-diags = np.diag_indices(int(N / 2))
-non_diags = np.where(~np.eye(int(N / 2), dtype=bool))
-table_dip = {}
-for key in Ks_dip.keys():
-    table_dip[key] = Ks_dip[key][non_diags].flatten()
-
-table_dip = pd.DataFrame(data=table_dip)
-corr_dip = table_dip.corr(method="pearson")
-
-
-### PCA and SI ###
-print("computing PCA and SI", flush = True)
-
-PCA = {}
-for key in Ks_dip.keys():
-    K = Ks_dip[key]
-    w, v = np.linalg.eig(K)
-    idx = w.argsort()[::-1]
-    w = w[idx]
-    v = v[:, idx]
-    ndim = min(10, (w >= 0).sum())
-    pc = np.dot(v[:, :ndim], np.diag(np.power(w[:ndim], 0.5)))
-    PCA[key] = pc
-
-true_labels = np.repeat(np.arange(len(ns)), (np.array(ns) / 2).astype(int))
-SI = {}
-for key in PCA.keys():
-    SI[key] = np.array(
-        [separation_index(true_labels, PCA[key][:, :i]).mean() for i in range(1, 11)]
-    )
-SI = pd.DataFrame(SI)
-
-### output ###
+# ### compute Ks ###
+# print("computing Ks", flush = True)
+# if compute_Ks:
+#     K_all = getK(trees, np.arange(M))
+#     K_common = getK(trees, commons)
+#     K_rare = getK(trees, rares)
+#     K_obs = getK(trees, obss)
+#     K_cas = getK(trees, cass)
+#
+# if run_egrm:
+#     print("computing EK", flush = True)
+#     EK, _, EK_mu = varGRM_C(trees, var=False)
+#
+# if run_mtmrca:
+#     print("computing mTMRCA", flush = True)
+#     mtmrca, _ = mTMRCA_C(trees)
+#
+# ### running LD pruning ###
+# if run_prune:
+#     print("computing K_pruned", flush = True)
+#     os.mkdir("prune")
+#     os.chdir("prune")
+#
+#     from pyplink import PyPlink
+#     from bed_reader import open_bed
+#
+#     samples = range(int(N / 2))
+#     X_obs = getX(trees, obss)
+#     maternals = np.array(range(0, N, 2))
+#     paternals = np.array(range(1, N, 2))
+#     X_obs_dip = X_obs[maternals] + X_obs[paternals]
+#     loci = np.array([v.position for v in trees.variants()])
+#
+#     with PyPlink(name, "w") as bedfile:
+#         for v in np.transpose(X_obs_dip):
+#             bedfile.write_genotypes(v)
+#
+#     fam_file = open(name + ".fam", "a")
+#     for idx, sample in enumerate(samples):
+#         string = (
+#             "FID{}".format(sample + 1) + " IID{}".format(sample + 1) + " 0 0 0 0" + "\n"
+#         )
+#         bytes = fam_file.write(string)
+#     fam_file.close()
+#
+#     bim_file = open(name + ".bim", "a")
+#     for idx, obs in enumerate(obss):
+#         string = "1 snp" + str(obs + 1) + " 0 " + str(int(loci[obs])) + " A T\n"
+#         bytes = bim_file.write(string)
+#     bim_file.close()
+#
+#     os.system(
+#         "~/bin/plink2 "
+#         + "--bfile "
+#         + name
+#         + " "
+#         + "--indep-pairwise 50 5 0.1 "
+#         + "--out LD"
+#     )
+#
+#     os.system(
+#         "~/bin/plink2 "
+#         + "--bfile "
+#         + name
+#         + " --make-bed "
+#         + "--extract LD.prune.in "
+#         + "--out pruned"
+#     )
+#
+#     X_pruned = open_bed("pruned.bed").read()
+#     Z_pruned = X_pruned
+#     Z_pruned -= Z_pruned.mean(axis=0)
+#     Z_pruned /= Z_pruned.std(axis=0)
+#     K_pruned = np.dot(Z_pruned, np.transpose(Z_pruned))
+#
+#     os.chdir("..")
+#
+# ### running impute ###
+# def X2gen(X):
+#     n, m = X.shape
+#     maternals = np.array(range(0, n, 2))
+#     paternals = np.array(range(1, n, 2))
+#     X_dip = X[maternals, :] + X[paternals, :]
+#
+#     tmp1 = (X_dip == 2).astype(int)
+#     tmp2 = (X_dip == 1).astype(int)
+#     tmp3 = (X_dip == 0).astype(int)
+#
+#     n_gen = int(n * 3 / 2)
+#     buffer = np.zeros([n_gen, m]).astype(int)
+#     buffer[np.arange(0, n_gen, 3), :] = tmp1
+#     buffer[np.arange(1, n_gen, 3), :] = tmp2
+#     buffer[np.arange(2, n_gen, 3), :] = tmp3
+#     return buffer
+#
+#
+# def gen2X(gen):
+#     n, m = gen.shape
+#     tmp1 = gen[np.arange(0, n, 3), :]
+#     tmp2 = gen[np.arange(1, n, 3), :]
+#     buffer = tmp1 * 2 + tmp2
+#     return buffer
+#
+#
+# if run_impute:
+#     print("computing K_imputed", flush = True)
+#     os.mkdir("impute")
+#     os.chdir("impute")
+#
+#     X_obs = getX(trees, obss)
+#     gen_obs = X2gen(X_obs)
+#     loci_obs = np.ceil(loci[obss]).astype(int)
+#
+#     haps_file = open(name + ".gen", "a")
+#     i = 0
+#     for idx, obs in enumerate(obss):
+#         string = "chr snp" + str(obs + 1) + " " + str(loci_obs[idx]) + " A" + " T "
+#         string = string + " ".join(map(str, gen_obs[:, idx])) + "\n"
+#         bytes = haps_file.write(string)
+#         i += 1
+#     haps_file.close()
+#
+#     X_ref = getX(trees_ref, np.arange(trees_ref.num_mutations))
+#     gen_ref = X2gen(X_ref)
+#     loci_ref = np.array([v.position for v in trees_ref.variants()])
+#     loci_ref = np.ceil(loci_ref).astype(int)
+#
+#     haps_file = open(name + "_ref.gen", "a")
+#     i = 0
+#     for idx, obs in enumerate(np.arange(trees_ref.num_mutations)):
+#         string = "1 refsnp" + str(obs + 1) + " " + str(loci_ref[idx]) + " A" + " T "
+#         string = string + " ".join(map(str, gen_ref[:, idx])) + "\n"
+#         bytes = haps_file.write(string)
+#         i += 1
+#     haps_file.close()
+#
+#     map_file = open(name + ".map", "a")
+#     map_file.write("pos COMBINED_rate Genetic_Map\n")
+#     for idx, obs in enumerate(obss):
+#         string = str(loci_obs[idx]) + " " + str(1) + " "
+#         string = string + str(loci_obs[idx] / 1000000) + "\n"
+#         bytes = map_file.write(string)
+#     map_file.close()
+#
+#     os.system(
+#         "~/bin/impute2 "
+#         + "-g_ref "
+#         + name
+#         + "_ref.gen "
+#         + "-m "
+#         + name
+#         + ".map "
+#         + "-g "
+#         + name
+#         + ".gen "
+#         + "-int 0 "
+#         + str(l)
+#         + " -allow_large_regions "
+#         + "-o out.gen"
+#     )
+#
+#     gen_imputed = pd.read_table("out.gen", sep=" ", header=None).iloc[:, 5:]
+#     gen_imputed = np.transpose(gen_imputed.values)
+#     X_imputed = gen2X(gen_imputed)
+#
+#     keep = np.logical_and(X_imputed.mean(axis=0) > 0, X_imputed.mean(axis=0) < 1)
+#     X_imputed = X_imputed[:, keep]
+#
+#     Z_imputed = X_imputed
+#     Z_imputed -= Z_imputed.mean(axis=0)
+#     Z_imputed /= Z_imputed.std(axis=0)
+#     K_imputed = np.dot(Z_imputed, np.transpose(Z_imputed))
+#
+#     os.chdir("..")
+#
+#
+# ### running relate ###
+# if run_relate:
+#     print("computing EK_relate", flush = True)
+#     os.mkdir("relate")
+#     os.chdir("relate")
+#
+#     X_obs = getX(trees, obss)
+#     loci_obs = np.ceil(loci[obss]).astype(int)
+#
+#     haps_file = open(name + ".haps", "a")
+#     i = 0
+#     for idx, obs in enumerate(obss):
+#         string = "1 snp" + str(obs + 1) + " " + str(loci_obs[idx]) + " A" + " T "
+#         string = string + " ".join(map(str, X_obs[:, idx])) + "\n"
+#         bytes = haps_file.write(string)
+#         i += 1
+#     haps_file.close()
+#     os.system(
+#         "gzip -f " + name + ".haps > " + name + ".haps.gz && rm -f " + name + ".haps"
+#     )
+#
+#     sample_file = open(name + ".sample", "a")
+#     sample_file.write("ID_1 ID_2 missing\n0 0 0\n")
+#     for idx in range(int(N)):
+#         string = "UNR" + str(idx + 1) + " NA" + " 0\n"
+#         bytes = sample_file.write(string)
+#     sample_file.close()
+#
+#     map_file = open(name + ".relate.map", "a")
+#     map_file.write("pos COMBINED_rate Genetic_Map\n")
+#     for idx, obs in enumerate(obss):
+#         string = str(loci_obs[idx]) + " " + str(1) + " "
+#         string = string + str(loci_obs[idx] / 1000000) + "\n"
+#         bytes = map_file.write(string)
+#     map_file.close()
+#
+#     # os.system("~/bin/relate.sh " + name + ".haps.gz " + name + ".sample " + name + ".relate.map " + name)
+#     os.system("rm -r -f " + name)
+#     os.system(
+#         "~/bin/Relate --mode All -m 1.25e-8 -N 30000 --memory 20 --haps "
+#         + name
+#         + ".haps.gz --sample "
+#         + name
+#         + ".sample --map "
+#         + name
+#         + ".relate.map -o "
+#         + name
+#     )
+#     os.system(
+#         "~/bin/RelateFileFormats --mode ConvertToTreeSequence "
+#         + "-i "
+#         + name
+#         + " -o "
+#         + name
+#     )
+#
+#     trees_relate = tskit.load(name + ".trees")
+#     EK_relate, _, EK_relate_mu = varGRM_C(trees_relate)
+#     EK_relate_partial, _, EK_relate_partial_mu = varGRM_C(trees_relate, rlim = 0, alim = 100)
+#
+#     os.chdir("..")
+#
+#
+# ### running tsinfer
+# if run_tsinfer:
+#     print("computing EK_tsinfer", flush = True)
+#     os.mkdir("tsinfer")
+#     os.chdir("tsinfer")
+#
+#     X_obs = getX(trees, obss)
+#     loci_obs = np.ceil(loci[obss]).astype(int)
+#     with tsinfer.SampleData(path=name + ".samples", sequence_length=l) as sample_data:
+#         for idx, obs in enumerate(obss):
+#             sample_data.add_site(loci_obs[idx], X_obs[:, idx])
+#
+#     os.system("~/bin/tsinfer infer " + name + ".samples -p -t 4")
+#
+#     trees_tsinfer = tskit.load(name + ".trees")
+#     trees_tsinfer_simplified = trees_tsinfer.simplify(filter_populations = False, filter_individuals = False, filter_sites = False, keep_unary = False)
+#     trees_tsdate = tsdate.date(trees_tsinfer_simplified, Ne=10000, mutation_rate = 1e-8)
+#
+#     EK_tsinfer, _, EK_tsinfer_mu = varGRM_C(trees_tsinfer_simplified)
+#     EK_tsdate, _, EK_tsdate_mu = varGRM_C(trees_tsdate)
+#
+#     os.chdir("..")
+#
+#
+# ### running chromopainter
+# if run_chromopainter:
+#     print("computing K_chromopainter", flush = True)
+#     os.mkdir("chromopainter")
+#     os.chdir("chromopainter")
+#
+#     idfile = pd.DataFrame({"ind":["Ind" + str(i+1) for i in np.arange(int(N/2))]})
+#     idfile.to_csv(name + ".ids", sep = ",", header = False, index = False)
+#
+#     loci = np.array([v.position for v in trees.variants()])
+#     loci_obs = np.ceil(loci[obss]).astype(int)
+#     recombfile = pd.DataFrame({"start.pos":loci_obs, "recom.rate.perbp":0.0000001})
+#     recombfile.to_csv(name + ".rec", sep = " ", header = True, index = False, float_format = '%.7f')
+#
+#     phasefile = open(name + ".phase", "w")
+#     phasefile.write(str(N) + "\n")
+#     phasefile.write(str(M_obs) + "\n")
+#     phasefile.write("P " + " ".join(loci_obs.astype(str)) + "\n")
+#     X_obs = getX(trees, obss)
+#     for x in X_obs:
+#         bytes = phasefile.write("".join(x.astype(str)) + "\n")
+#     phasefile.close()
+#
+#     os.system(
+#         "fs " + name + ".cp " +
+#         "-idfile " + name + ".ids " +
+#         "-phasefiles " + name + ".phase " +
+#         "-recombfiles " + name + ".rec " +
+#         "-go"
+#     )
+#
+#     chunkcounts = pd.read_csv(name + "_linked.chunkcounts.out", sep = " ", skiprows = 1, index_col = 0).values
+#     np.fill_diagonal(chunkcounts, chunkcounts.sum(axis = 1) / (chunkcounts.shape[0] - 1))
+#     chunkcounts -= chunkcounts.mean(axis = 1)
+#     K_chromopainter = np.dot(chunkcounts, np.transpose(chunkcounts))
+#
+#     os.chdir("..")
+#
+#
+# ### collect Ks and compute correlation ###
+# Ks = {
+#     "K_all": K_all,
+#     "K_common": K_common,
+#     "K_rare": K_rare,
+#     "K_obs": K_obs,
+#     "K_cas": K_cas,
+# }
+# if run_egrm:
+#     Ks["EK"] = EK
+# if run_relate:
+#     Ks["EK_relate"] = EK_relate
+#     Ks["EK_relate_partial"] = EK_relate_partial
+# if run_tsinfer:
+#     Ks["EK_tsinfer"] = EK_tsinfer
+#     Ks["EK_tsdate"] = EK_tsdate
+# if run_mtmrca:
+#     Ks["mtmrca"] = mtmrca
+#
+# # haploid
+# diags = np.diag_indices(int(N))
+# non_diags = np.where(~np.eye(int(N), dtype=bool))
+# table = {}
+# for key in Ks.keys():
+#     table[key] = Ks[key][non_diags].flatten()
+#
+# table = pd.DataFrame(data=table)
+# corr = table.corr(method="pearson")
+# corr_spearman = table.corr(method="spearman")
+#
+# # diploid
+# maternals = np.array(range(0, N, 2))
+# paternals = np.array(range(1, N, 2))
+# Ks_dip = {}
+# for key in Ks.keys():
+#     Ks_dip[key] = 0.5 * (
+#         Ks[key][maternals, :][:, maternals]
+#         + Ks[key][maternals, :][:, paternals]
+#         + Ks[key][paternals, :][:, maternals]
+#         + Ks[key][paternals, :][:, paternals]
+#     )
+#
+# if run_impute:
+#     Ks_dip["K_imputed"] = K_imputed
+# if run_prune:
+#     Ks_dip["K_pruned"] = K_pruned
+# if run_chromopainter:
+#     Ks_dip["K_chromopainter"] = K_chromopainter
+#
+# diags = np.diag_indices(int(N / 2))
+# non_diags = np.where(~np.eye(int(N / 2), dtype=bool))
+# table_dip = {}
+# for key in Ks_dip.keys():
+#     table_dip[key] = Ks_dip[key][non_diags].flatten()
+#
+# table_dip = pd.DataFrame(data=table_dip)
+# corr_dip = table_dip.corr(method="pearson")
+#
+#
+# ### PCA and SI ###
+# print("computing PCA and SI", flush = True)
+#
+# PCA = {}
+# for key in Ks_dip.keys():
+#     K = Ks_dip[key]
+#     w, v = np.linalg.eig(K)
+#     idx = w.argsort()[::-1]
+#     w = w[idx]
+#     v = v[:, idx]
+#     ndim = min(10, (w >= 0).sum())
+#     pc = np.dot(v[:, :ndim], np.diag(np.power(w[:ndim], 0.5)))
+#     PCA[key] = pc
+#
+# true_labels = np.repeat(np.arange(len(ns)), (np.array(ns) / 2).astype(int))
+# SI = {}
+# for key in PCA.keys():
+#     SI[key] = np.array(
+#         [separation_index(true_labels, PCA[key][:, :i]).mean() for i in range(1, 11)]
+#     )
+# SI = pd.DataFrame(SI)
+#
+# ### output ###
 results = {
     "args": args,
     "fst": fst,
-    "obss": obss,
-    "Ks": Ks,
-    "Ks_dip": Ks_dip,
-    "corr": corr,
-    "corr_spearman": corr_spearman,
-    "corr_dip": corr_dip,
-    "PCA": PCA,
-    "SI": SI,
+    # "obss": obss,
+    # "Ks": Ks,
+    # "Ks_dip": Ks_dip,
+    # "corr": corr,
+    # "corr_spearman": corr_spearman,
+    # "corr_dip": corr_dip,
+    # "PCA": PCA,
+    # "SI": SI,
 }
 
 with open("results.p", "wb") as f:
