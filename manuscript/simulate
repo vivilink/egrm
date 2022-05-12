@@ -11,6 +11,7 @@ import pickle
 # import tsdate
 import math
 import msprime
+import datetime
 import tskit
 
 from scipy.spatial import distance_matrix
@@ -21,7 +22,7 @@ from egrm import varGRM_C, mTMRCA_C
 def step_mig_mat(m, nrow, ncol):
     pmat = np.arange(0, nrow * ncol).reshape(nrow, ncol)
     mmat = np.zeros(shape=[nrow * ncol, nrow * ncol])
-    
+
     def contain(ix, max_ix):
         if ix < 0:
             return 0
@@ -29,14 +30,14 @@ def step_mig_mat(m, nrow, ncol):
             return max_ix - 1
         else:
             return ix
-    
+
     for ii in range(nrow * ncol):
         center_ix = np.where(pmat == ii)
         top_ix = pmat[contain(center_ix[0] - 1, nrow), contain(center_ix[1], ncol)]
         bottom_ix = pmat[contain(center_ix[0] + 1, nrow), contain(center_ix[1], ncol)]
         left_ix = pmat[contain(center_ix[0], nrow), contain(center_ix[1] - 1, ncol)]
         right_ix = pmat[contain(center_ix[0], nrow), contain(center_ix[1] + 1, ncol)]
-        
+
         mmat[ii, top_ix] = mmat[ii, bottom_ix] = mmat[ii, left_ix] = mmat[
             ii, right_ix
         ] = m
@@ -66,7 +67,7 @@ def Fst(trees, ns):
 def Fst2(trees, study_ids, reference_ids):
     n1 = study_ids.shape[0]
     n2 = reference_ids.shape[0]
-    
+
     buffer = []
     for v in trees.variants():
         genotypes = v.genotypes
@@ -80,7 +81,7 @@ def Fst2(trees, study_ids, reference_ids):
         q2 = p2 * (1 - p2)
         fst = (q - (q1 * n1 + q2 * n2) / (n1 + n2)) / q
         buffer.append(fst)
-        
+
     return np.array(buffer).mean()
 
 
@@ -143,7 +144,7 @@ def separation_index(true_labels, x, dmat=None):
     if dmat is None:
         dmat = distance_matrix(x, x)
     omat = dmat.argsort(axis=1)
-    
+
     scores = []
     for i in np.arange(true_labels.shape[0]):
         fellows = np.where(true_labels == true_labels[i])[0]
@@ -151,7 +152,7 @@ def separation_index(true_labels, x, dmat=None):
         intersects = np.intersect1d(neighbors, fellows)
         score = intersects.shape[0] / fellows.shape[0]
         scores.append(score)
-    
+
     scores = np.array(scores)
     return scores
 
@@ -196,6 +197,10 @@ parser.add_argument(
 parser.add_argument(
     "--run_chromopainter", "--chromopainter", action="store_true", help="compute K_chromopainter"
 )
+parser.add_argument(
+    "--seed", help="seed for msprime simulation",
+    default=datetime.datetime.now().hour * 10000 + datetime.datetime.now().minute * 100 + datetime.datetime.now().second
+)
 
 # demography and population structure
 parser.add_argument("--demo", type=str, default="ooa", help="demography model")
@@ -239,7 +244,6 @@ run_mtmrca = False
 run_impute = False
 run_prune = False
 
-
 print("admixture set to", admixture)
 print("ns is set to", ns)
 print("ns_ref is set to", ns_ref)
@@ -278,7 +282,7 @@ N_ref = sum(ns_ref)
 del n
 
 ### simulate genotypes ###
-print("simulating genotypes", flush = True)
+print("simulating genotypes", flush=True)
 
 N_B = 2100
 N_EU0 = 1000
@@ -304,10 +308,10 @@ else:
 
 if admixture:
     population_configurations = [
-        msprime.PopulationConfiguration(
-            sample_size=0, initial_size=_initial_size, growth_rate=_growth_rate
-        )
-    ] * (nrow * ncol)
+                                    msprime.PopulationConfiguration(
+                                        sample_size=0, initial_size=_initial_size, growth_rate=_growth_rate
+                                    )
+                                ] * (nrow * ncol)
     population_configurations.append(
         msprime.PopulationConfiguration(
             sample_size=N + N_ref, initial_size=_initial_size, growth_rate=_growth_rate
@@ -360,11 +364,12 @@ trees = msprime.simulate(
     recombination_rate=recomb_rate,
     mutation_rate=mutation_rate,
     demographic_events=demo_events,
+    random_seed=seed
 )
 
 print("trees.num_samples", trees.num_samples)
 ### compute Fst and then split study and reference
-print("computing FST", flush = True)
+print("computing FST", flush=True)
 
 study_ids = []
 reference_ids = []
@@ -398,7 +403,6 @@ MAFs = np.array([v.genotypes.mean() for v in trees.variants()])
 MACs = np.array([v.genotypes.sum() for v in trees.variants()])
 loci = np.array([v.position for v in trees.variants()])
 M = loci.shape[0]
-
 
 ### commons, rares, obss, cass ###
 commons = np.where(MAFs >= 0.05)[0]
