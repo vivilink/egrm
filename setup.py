@@ -20,7 +20,7 @@ setup(
     description="Expected Genetic Relationship Matrix",
     long_description=readme(),
     long_description_content_type="text/markdown",
-    url="https://github.com/Ephraim-usc/egrm.git",
+    url="https://github.com/vivilink/egrm.git",
     packages=["egrm"],
     python_requires=">=3",
     install_requires=[
