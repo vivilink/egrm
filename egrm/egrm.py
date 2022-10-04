@@ -171,12 +171,12 @@ def mTMRCA_C(trees, log=None,
 ### without C extension
 
 # the non-C version of varGRM_C
-def varGRM(trees, tree, log=None,
+def varGRM(num_samples, tree, log=None,
            rlim=0, alim=math.inf,
            left=0, right=math.inf,
            gmap=Gmap(None), g=(lambda x: 1 / (x * (1 - x))),
            var=True, sft=False):
-    N = trees.num_samples
+    N = num_samples
     egrm = np.zeros([N, N])
     if var:
         egrm2 = np.zeros([N, N])
