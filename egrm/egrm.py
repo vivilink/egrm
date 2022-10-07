@@ -170,54 +170,69 @@ def mTMRCA_C(trees, log=None,
 
 ### without C extension
 
-# the non-C version of varGRM_C
-def varGRM(num_samples, tree, log=None,
-           rlim=0, alim=math.inf,
-           left=0, right=math.inf,
-           gmap=Gmap(None), g=(lambda x: 1 / (x * (1 - x))),
-           var=True, sft=False):
-    N = num_samples
-    egrm = np.zeros([N, N])
-    if var:
-        egrm2 = np.zeros([N, N])
-        tmp1 = np.zeros(N)
-        tmp2 = 0
+def egrm_one_tree_no_normalization(tree,
+                                   num_samples,
+                                   gmap=Gmap(None),
+                                   left=0,
+                                   right=math.inf,
+                                   g=(lambda x: 1 / (x * (1 - x)))):
+    """
+    Extracted from original non-C version of varGRM function. Calculates an unnormalized eGRM (no division by mu(G) and
+    no centering by column or row.
 
-    total_mu = 0
+    @param tree: tskit.trees.tree One tree of ARG
+    @param num_samples: int Number of haplotypes is sample
+    @param gmap:
+    @param left:
+    @param right:
+    @param g: function used to get something like expected number of descendants from a branch?
+    @return: np.array, float unnormalized eGRM for one tree, expected number of mutations on that tree
+    """
+    tree_span = - gmap(max(left, tree.interval[0])) + gmap(min(right, tree.interval[1]))
+    if tree_span <= 0:
+        raise ValueError("l is negative (egrm)")
+    if tree.total_branch_length == 0:
+        raise ValueError("branch length is zero (egrm)")
 
-    l = - gmap(max(left, tree.interval[0])) + gmap(min(right, tree.interval[1]))
-    if l <= 0: raise ValueError("l is negative (egrm)")
-    if tree.total_branch_length == 0: raise ValueError("branch length is zero (egrm)")
+    total_mu_one_tree = 0
+    cov = np.zeros([num_samples, num_samples])
 
     for c in tree.nodes():
         descendants = list(tree.samples(c))
         n = len(descendants)
-        if (n == 0 or n == N): continue
-        t = max(0, min(alim, tree.time(tree.parent(c))) - max(rlim, tree.time(c)))
-        mu = l * t * 1e-8
-        p = float(n / N)
-        egrm[np.ix_(descendants, descendants)] += mu * g(p)
-        if var:
-            egrm2[np.ix_(descendants, descendants)] += mu * np.power(g(p), 2) * np.power((1 - 2 * p), 2)
-            tmp1[descendants] += mu * np.power(g(p), 2) * (np.power(p, 2) - 2 * np.power(p, 3))
-            tmp2 += mu * np.power(g(p), 2) * np.power(p, 4)
-        total_mu += mu
+        if n == 0 or n == num_samples:
+            continue
 
-    egrm /= total_mu
-    if var:
-        egrm2 /= total_mu
-        tmp1 /= total_mu
-        tmp2 /= total_mu
+        # I removed alim and rlim from following line, could cause problem
+        branch_len = max(0, tree.time(tree.parent(c)) - tree.time(c))
 
-    egrm -= egrm.mean(axis=0)
-    egrm -= egrm.mean(axis=1, keepdims=True)
-    if var:
-        e = np.reciprocal((lambda x: x[x != 0])(np.random.poisson(lam=total_mu, size=10000)).astype("float")).mean()
-        vargrm = e * (egrm2 + np.tile(tmp1, (N, 1)) + np.tile(tmp1, (N, 1)).transpose() + tmp2 - np.power(egrm, 2))
-    else:
-        vargrm = None
+        mu = tree_span * branch_len * 1e-8
 
-    return egrm, vargrm, total_mu
+        p = float(n / num_samples)
+        cov[np.ix_(descendants, descendants)] += mu * g(p)
+        total_mu_one_tree += mu
+
+    return cov, total_mu_one_tree
+
+
+# the non-C version of varGRM_C
+def varGRM(tree, num_samples):
+    """
+    Calculate normalized eGRM for one tree of ARG
+
+    @param num_samples: number of haploid samples
+    @param tree: tskit.trees.tree
+    @return: np.array normalized eGRM for tree, float expected number of mutations on tree
+    """
+
+    egrm_one_tree, total_mu_one_tree = egrm_one_tree_no_normalization(tree=tree, num_samples=num_samples)
+
+    # normalize
+    egrm_one_tree /= total_mu_one_tree
+    egrm_one_tree -= egrm_one_tree.mean(axis=0)
+    egrm_one_tree -= egrm_one_tree.mean(axis=1, keepdims=True)
+
+    return egrm_one_tree, total_mu_one_tree
 
 
 # the non-C version of mTMRCA_C
@@ -257,4 +272,3 @@ def mTMRCA(trees, log=None,
     mtmrca /= total_l
     pbar.close()
     return mtmrca, total_l
-
