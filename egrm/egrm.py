@@ -122,6 +122,45 @@ def varGRM_C(trees, tree, log=None,
     pbar.close()
     return egrm, vargrm, total_mu
 
+def egrm_one_tree_no_normalization_C(tree,
+                                   num_samples,
+                                   gmap=Gmap(None),
+                                   left=0,
+                                   right=math.inf,
+                                   g=(lambda x: 1 / (x * (1 - x)))):
+
+    num_samples = num_samples
+    egrm_C = matrix.new_matrix(num_samples)
+
+    total_mu_one_tree = 0
+    l = - gmap(max(left, tree.interval[0])) + gmap(min(right, tree.interval[1]))
+    if l <= 0: raise ValueError("l is negative (egrm)")
+    if tree.total_branch_length == 0: raise ValueError("branch length is zero (egrm)")
+
+    for c in tree.nodes():
+        descendants = list(tree.samples(c))
+        n = len(descendants)
+        if (n == 0 or n == num_samples): continue
+        branch_len = max(0, tree.time(tree.parent(c)) - tree.time(c))
+        mu = l * branch_len * 1e-8
+        p = float(n / num_samples)
+        matrix.add_square(egrm_C, descendants, mu * g(p))
+        total_mu_one_tree += mu
+
+
+        # p = float(n / num_samples)
+        # cov[np.ix_(descendants, descendants)] += mu * g(p)
+        # total_mu_one_tree += mu
+
+    egrm = mat_C_to_ndarray(egrm_C, num_samples)
+
+    egrm /= total_mu_one_tree
+
+    egrm -= egrm.mean(axis=0)
+    egrm -= egrm.mean(axis=1, keepdims=True)
+    vargrm = None
+
+    return egrm, vargrm, total_mu_one_tree
 
 # computes the mean TMRCA (mTMRCA) based on the tskit TreeSequence [trees].
 # trees: tskit TreeSequence object.
