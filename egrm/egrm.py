@@ -9,9 +9,8 @@ import pandas as pd
 import matrix
 
 
-# exports [matrix._matrix_C_API] object into a 2d numpy array
-# mat_C: [matrix._matrix_C_API] object initiated by matrix.new_matrix, only stores the upper triangle elements of a square matrix
-# N: the number of columns/rows
+# exports [matrix._matrix_C_API] object into a 2d numpy array mat_C: [matrix._matrix_C_API] object initiated by
+# matrix.new_matrix, only stores the upper triangle elements of a square matrix N: the number of columns/rows
 def mat_C_to_ndarray(mat_C, N):
     buffer = matrix.export_ndarray(mat_C)
     buffer = buffer + np.transpose(buffer) - np.diag(np.diag(buffer))
@@ -53,114 +52,65 @@ class Gmap:
 
 ### main functions
 
-# computes the eGRM (and varGRM if var == True) based on the tskit TreeSequence trees.
-# trees: tskit TreeSequence object.
-# log: tqdm log file path
-# rlim, alim: most recent and most ancient time limits (in unit of generation) between which the eGRM (varGRM) is computed.
-# left, right: leftmost and rightmost positions (in unit of base pair) between which the eGRM (varGRM) is computed.
-# gmap: [Gmap] object that maps the physical position (in unit of base pair) into genetic position (in unit of 10^-6 centimorgan).
-# g: a scaling function of the allele frequency. Use the default for the standard GRM and eGRM definitions.
-# var: True/False variable indicating whether the varGRM is to be computed.
-# sft: True/False variable indicating whether the first tree is to be skipped. Not recommended to use together with [left] and [right] options.
-def varGRM_C(trees, tree, log=None,
-             rlim=0, alim=math.inf,
-             left=0, right=math.inf,
-             gmap=Gmap(None), g=(lambda x: 1 / (x * (1 - x))),
-             var=True, sft=False):
-    N = trees.num_samples
-    egrm_C = matrix.new_matrix(N)
-    if var:
-        egrm2_C = matrix.new_matrix(N)
-        tmp1 = np.zeros(N)
-        tmp2 = 0
+def varGRM_C(tree, num_samples):
+    """
+    Calculate normalized eGRM for one tree of ARG
+    @param num_samples: number of haploid samples
+    @param tree: tskit.trees.tree
+    @return: np.array normalized eGRM for tree, float expected number of mutations on tree
+    """
+    egrm_one_tree, total_mu_one_tree = egrm_one_tree_no_normalization(tree=tree, num_samples=num_samples)
 
-    total_mu = 0
-    pbar = tqdm.tqdm(total=trees.num_trees,
-                     bar_format='{l_bar}{bar:30}{r_bar}{bar:-30b}',
-                     miniters=trees.num_trees // 100,
-                     file=log)
+    egrm_one_tree /= total_mu_one_tree
 
-    trees_ = trees.trees()
-    if sft: next(trees_)
+    egrm_one_tree -= egrm_one_tree.mean(axis=0)
+    egrm_one_tree -= egrm_one_tree.mean(axis=1, keepdims=True)
 
-    l = - gmap(max(left, tree.interval[0])) + gmap(min(right, tree.interval[1]))
-    if l <= 0: raise ValueError("l is negative (egrm)")
-    if tree.total_branch_length == 0: raise ValueError("branch length is zero (egrm)")
+    return egrm_one_tree, total_mu_one_tree
 
-    for c in tree.nodes():
-        descendants = list(tree.samples(c))
-        n = len(descendants)
-        if (n == 0 or n == N): continue
-        t = max(0, min(alim, tree.time(tree.parent(c))) - max(rlim, tree.time(c)))
-        mu = l * t * 1e-8
-        p = float(n / N)
-        matrix.add_square(egrm_C, descendants, mu * g(p))
-        if var:
-            matrix.add_square(egrm2_C, descendants, mu * np.power(g(p), 2) * np.power((1 - 2 * p), 2))
-            tmp1[descendants] += mu * np.power(g(p), 2) * (np.power(p, 2) - 2 * np.power(p, 3))
-            tmp2 += mu * np.power(g(p), 2) * np.power(p, 4)
-        total_mu += mu
-
-    egrm = mat_C_to_ndarray(egrm_C, N)
-    if var:
-        egrm2 = mat_C_to_ndarray(egrm2_C, N)
-
-    egrm /= total_mu
-    if var:
-        egrm2 /= total_mu
-        tmp1 /= total_mu
-        tmp2 /= total_mu
-
-    egrm -= egrm.mean(axis=0)
-    egrm -= egrm.mean(axis=1, keepdims=True)
-    if var:
-        e = np.reciprocal((lambda x: x[x != 0])(np.random.poisson(lam=total_mu, size=10000)).astype("float")).mean()
-        vargrm = e * (egrm2 + np.tile(tmp1, (N, 1)) + np.tile(tmp1, (N, 1)).transpose() + tmp2 - np.power(egrm, 2))
-    else:
-        vargrm = None
-
-    pbar.close()
-    return egrm, vargrm, total_mu
 
 def egrm_one_tree_no_normalization_C(tree,
-                                   num_samples,
-                                   gmap=Gmap(None),
-                                   left=0,
-                                   right=math.inf,
-                                   g=(lambda x: 1 / (x * (1 - x)))):
-
+                                     num_samples,
+                                     gmap=Gmap(None),
+                                     left=0,
+                                     right=math.inf,
+                                     g=(lambda x: 1 / (x * (1 - x)))):
+    """
+    Extracted from original varGRM_C function. Calculates an unnormalized eGRM (no division by mu(G) and
+    no centering by column or row.
+    @param tree: tskit.trees.tree One tree of ARG
+    @param num_samples: int Number of haplotypes is sample
+    @param gmap:
+    @param left:
+    @param right:
+    @param g: function used to get something like expected number of descendants from a branch?
+    @return: np.array, float unnormalized eGRM for one tree, expected number of mutations on that tree
+    """
     num_samples = num_samples
     egrm_C = matrix.new_matrix(num_samples)
 
     total_mu_one_tree = 0
-    l = - gmap(max(left, tree.interval[0])) + gmap(min(right, tree.interval[1]))
-    if l <= 0: raise ValueError("l is negative (egrm)")
-    if tree.total_branch_length == 0: raise ValueError("branch length is zero (egrm)")
+    tree_span = - gmap(max(left, tree.interval[0])) + gmap(min(right, tree.interval[1]))
+    if tree_span <= 0:
+        raise ValueError("l is negative (egrm)")
+    if tree.total_branch_length == 0:
+        raise ValueError("branch length is zero (egrm)")
 
     for c in tree.nodes():
         descendants = list(tree.samples(c))
         n = len(descendants)
-        if (n == 0 or n == num_samples): continue
+        if n == 0 or n == num_samples:
+            continue
         branch_len = max(0, tree.time(tree.parent(c)) - tree.time(c))
-        mu = l * branch_len * 1e-8
+        mu = tree_span * branch_len * 1e-8
         p = float(n / num_samples)
         matrix.add_square(egrm_C, descendants, mu * g(p))
         total_mu_one_tree += mu
 
-
-        # p = float(n / num_samples)
-        # cov[np.ix_(descendants, descendants)] += mu * g(p)
-        # total_mu_one_tree += mu
-
     egrm = mat_C_to_ndarray(egrm_C, num_samples)
 
-    egrm /= total_mu_one_tree
+    return egrm, total_mu_one_tree
 
-    egrm -= egrm.mean(axis=0)
-    egrm -= egrm.mean(axis=1, keepdims=True)
-    vargrm = None
-
-    return egrm, vargrm, total_mu_one_tree
 
 # computes the mean TMRCA (mTMRCA) based on the tskit TreeSequence [trees].
 # trees: tskit TreeSequence object.
