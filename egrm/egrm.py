@@ -14,6 +14,7 @@ import matrix
 def mat_C_to_ndarray(mat_C, N):
     buffer = matrix.export_ndarray(mat_C)
     buffer = buffer + np.transpose(buffer) - np.diag(np.diag(buffer))
+    matrix.destroy_matrix(mat_C)
     return buffer
 
 
