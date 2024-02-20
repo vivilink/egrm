@@ -14,7 +14,7 @@ Installation
 
 Download the package and install from local:
 
-    git clone https://github.com/Ephraim-usc/egrm.git
+    git clone https://github.com/vivilink/egrm.git
     
     pip install ./egrm
 
