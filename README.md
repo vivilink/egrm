@@ -12,11 +12,7 @@ Please cite our paper if you use our method.
 Installation
 ------------
 
-Install from PyPI (not available yet):
-
-    pip install egrm
-
-Or download the package and install from local:
+Download the package and install from local:
 
     git clone https://github.com/Ephraim-usc/egrm.git
     
