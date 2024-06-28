@@ -60,7 +60,7 @@ def varGRM_C(tree, num_samples):
     @param tree: tskit.trees.tree
     @return: np.array normalized eGRM for tree, float expected number of mutations on tree
     """
-    egrm_one_tree, total_mu_one_tree = egrm_one_tree_no_normalization(tree=tree, num_samples=num_samples)
+    egrm_one_tree, total_mu_one_tree = egrm_one_tree_no_normalization_C(tree=tree, num_samples=num_samples)
 
     egrm_one_tree /= total_mu_one_tree
 
